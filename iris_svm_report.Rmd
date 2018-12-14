@@ -1,0 +1,378 @@
+---
+title: 'Iris Data Set: A Support Vector Machine Classifier'
+author: "Harold A. Hernández Roig"
+date: "December 14th, 2018"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+We deal with the classical Iris database due to R.A. Fisher. The data set contains 3 classes of 50 instances each, where each class refers to a type of iris plant. The aim of this report is to predict the class of an iris data in terms of some of the following variables:
+
+1. sepal length in cm 
+2. sepal width in cm 
+3. petal length in cm 
+4. petal width in cm 
+5. class: Setosa, Versicolour and Virginica
+
+
+We start by loading libraries and showing a quick exploratory (just visual) analysis of our data. Observations are divided into training and test sets in order to report an unbiased classification rate. Codes for this first part are also available at <https://github.com/hhroig/SVM-Iris-Seed-DataSets/blob/master/iris_svm_solutions.R>.
+
+```{r}
+
+# Packages
+library(caTools) # to split data into train/test
+library(ggplot2) # nice plots...
+library(GGally)  # also plotting tools
+library(e1071)   # classical package for svm
+
+## Load Data:
+dataset = iris
+
+## Some exploratory visualization 
+ggpairs(dataset, ggplot2::aes(colour = Species, alpha = 0.2))
+
+## Split Data: train 80% /test 20% to deal with overfitting: 
+##             120obs./30obs. for train/test resp.
+set.seed(123)
+split = sample.split(dataset$Species, SplitRatio = .8)
+training_set = subset(dataset, split == TRUE)
+test_set = subset(dataset, split == FALSE)
+
+```
+
+The preceding plots show a clear linear separation between class Setosa and the other two classes. There is no clear linear separation between classes Versicolor and Virginica. Moreover, there is some overlapping in the histograms when considering these two classes. We determine to conduct a classification procedure but only considering variables Petal.Length and Petal.Width. This is motivated by three simple facts: (1) these two variables show a clear separation (linear for Setosa) in the scatter-plots; (2) there is not too much overlapping in the histograms and (3) selecting just two variables allows us to graphically represent the decision boundaries and to visually check the accuracy of the methods.
+
+## Support Vector Machine Solutions Under Different Kernels
+
+### Linear Kernel
+
+````{r}
+##  LINEAR KERNEL
+model.l <- svm(Species ~ Petal.Width + Petal.Length, data = training_set,
+             type="C-classification",kernel="linear",probability = TRUE)
+print(model.l)
+
+# Compute decision values and probabilities:
+pred.l <- predict(model.l, test_set, decision.values = TRUE, probability = TRUE) 
+# Check accuracy:
+table(pred.l, test_set[,5])
+mean(pred.l == test_set[,5]) # Rate of well classified! (predicted)
+````
+
+Results are not surprising, we saw that for these two variables the data is separable. There are only two misclassified elements from classes Virginica and Versicolor. These two misclassifications are points in an overlapping region. The rate of well-classified elements is of $93.3\%$, even though, we will try to improve this and reduce the amount of support vectors by tuning the hyperparameter (just the cost). We set a not-too-thin grid in order to obtain results quickly.
+
+````{r}
+## Tuning cost:
+tune.l <- tune.svm(Species ~ Petal.Width + Petal.Length, data = training_set,
+                     type="C-classification",kernel="linear",probability = TRUE, cost = seq(0.1,10,by=0.1))
+optimal.cost.l = tune.l$best.parameters$cost
+
+## Tuned Model:
+
+model.l.tuned <- svm(Species ~ Petal.Width + Petal.Length, data = training_set,
+               type="C-classification",kernel="linear",probability = TRUE,
+               cost =optimal.cost.l)
+print(model.l.tuned)
+
+# Compute decision values and probabilities:
+pred.l.tuned <- predict(model.l.tuned, test_set, decision.values = TRUE, probability = TRUE)
+
+# Check accuracy:
+table(pred.l.tuned, test_set[,5])
+mean(pred.l.tuned == test_set[,5]) # Rate of well classified! (predicted)
+
+# Plot Decision Boundaries:
+plot(model.l.tuned, test_set[,3:5])
+plot(model.l.tuned, training_set[,3:5])
+````
+
+Well, we could not increase the rate from $93.3\%$ of well-classified on the test set. Nevertheless, we reduced the amount of support vectors and plots showed quite accurate decision boundaries!
+
+### Polynomial Kernel
+
+We move now to fix a polynomial kernel. We start by assuming the defaults hyperparameters in function "svm".
+
+````{r}
+##  POLYNOMIAL KERNEL
+model.p <- svm(Species ~ Petal.Width + Petal.Length, data = training_set,
+                     type="C-classification",kernel="polynomial",probability = TRUE)
+
+print(model.p)
+
+# Compute decision values and probabilities:
+pred.p <- predict(model.p, test_set, decision.values = TRUE, probability = TRUE)
+
+# Check accuracy:
+table(pred.p, test_set[,5])
+mean(pred.p == test_set[,5]) # Rate of well classified!
+
+````
+
+The results are quite good! We just have a single misclassification in our test set, leading to a $96.7\%$ of well classified elements. The number of support vectors is 28, so we would like to improve this, if possible. To do so, we tune all hyperparameters in the model. Based on some previous research we present in here a "reduced" grid of values for these parameters, in order to improve the computing time. 
+
+````{r}
+
+# Tuning cost, degree, gamma and coef0:
+
+tune.p <- tune.svm(Species ~ Petal.Width + Petal.Length, data = training_set,
+                   type="C-classification",kernel="polynomial",probability = TRUE,
+                   cost = seq(0.5,5,by=.5), coef0 = 0, degree = seq(3,5,by=1),
+                   gamma = seq(0.5,0.8,by=0.1))
+
+optimal.cost.p = tune.p$best.parameters$cost
+optimal.coef0.p = tune.p$best.parameters$coef0
+optimal.degree.p = tune.p$best.parameters$degree
+optimal.gamma.p = tune.p$best.parameters$gamma
+
+## Tuned Model:
+model.p.tuned <- svm(Species ~ Petal.Width + Petal.Length, data = training_set,
+               type="C-classification",kernel="polynomial",probability = TRUE,
+               cost = optimal.cost.p, coef0 = optimal.coef0.p,
+               degree = optimal.degree.p, gamma = optimal.gamma.p)
+
+print(model.p.tuned)
+
+# Compute decision values and probabilities:
+pred.p.tuned <- predict(model.p.tuned, test_set, decision.values = TRUE, probability = TRUE)
+
+# Check accuracy:
+table(pred.p.tuned, test_set[,5])
+mean(pred.p.tuned == test_set[,5]) # Rate of well classified!
+
+# Plot Decision Boundaries:
+plot(model.p.tuned, test_set[,3:5])
+plot(model.p.tuned, training_set[,3:5])
+````
+
+Results after tuning are not too promising. Even though we are able to reduce a bit the amount of support vectors, we add now a misclassified element. Nevertheless, the results are quite good and comparable to those from the usage of a linear kernel.
+
+
+
+### RBF (Gaussian) Kernel
+
+Let's try a radial kernel, with the default hyperparameters from "svm" function. 
+
+````{r}
+model.g <- svm(Species ~ Petal.Width + Petal.Length, data = training_set,
+             type="C-classification",kernel="radial",probability = TRUE)
+
+print(model.g)
+
+# Compute decision values and probabilities:
+pred.g <- predict(model.g, test_set, decision.values = TRUE, probability = TRUE)
+
+# Check accuracy:
+table(pred.g, test_set[,5])
+mean(pred.g == test_set[,5]) # Rate of well classified!
+````
+
+This kernel leads to a couple of misclassified elements, with $93.3\%$ of well-classified elements. Even tough the results are similar to those from a polynomial kernel, but we have some more support vectors. Let's try tuning the hyperparameters over a (once more, small) grid of values.
+
+````{r}
+# Tuning cost, degree, gamma and coef0:
+tune.g <- tune.svm(Species ~ Petal.Width + Petal.Length, data = training_set,
+                   type="C-classification",kernel="radial",probability = TRUE,
+                   cost = seq(1,10,by=1), gamma = seq(0,10,by=1))
+
+optimal.cost.g = tune.g$best.parameters$cost
+optimal.gamma.g = tune.g$best.parameters$gamma
+
+## Tuned Model:
+model.g.tuned <- svm(Species ~ Petal.Width + Petal.Length, data = training_set,
+               type="C-classification",kernel="radial",probability = TRUE,
+               cost = optimal.cost.g, gamma = optimal.gamma.g)
+
+print(model.g.tuned)
+
+# Compute decision values and probabilities:
+pred.g.tuned <- predict(model.g.tuned, test_set, decision.values = TRUE, probability = TRUE)
+
+# Check accuracy:
+table(pred.g.tuned, test_set[,5])
+mean(pred.g.tuned == test_set[,5]) # Rate of well classified!
+
+# Plot Decision Boundaries:
+plot(model.g.tuned, test_set[,3:5])
+plot(model.g.tuned, training_set[,3:5])
+````
+
+We find some similar results. There are still a couple of misclassified elements, but the amount of support vectors is smaller. Moreover the plots show clearly "circled" regions for Setosa and Versicolor over the plane defined by the covariates in study.
+
+### Mixture of Kernels
+
+We introduce now a mixture of linear and radial kernels. This is inspired in code at <https://www.r-bloggers.com/learning-kernels-svm/>. We fix the average of these two type of kernels with hyperparameters inspired on those from the tuning procedures.
+
+````{r}
+##  MIXTURE OF KERNELS
+library(kernlab)
+# Average Kernel = RBF Kernel + Polynomial Kernel
+kfunction2 <- function(sigma, degree, scale, offset)
+{
+  k <- function (x,y)
+  {
+    1/2*exp(-sigma*sum((x-y)^2)) + 1/2*(scale*sum((x)*(y))+offset)^degree
+  }
+  class(k) <- "kernel"
+  k
+}
+
+svp <- ksvm(Species ~ Petal.Width + Petal.Length, data = training_set,
+            type="C-svc", kernel=kfunction2(2, 1, 1, 0), C = 1, prob.model=TRUE)
+svp
+
+## get fitted values
+fit.svp = fitted(svp)
+## Test on the training set with probabilities as output
+pred.svp = predict(svp, test_set, type = "response")
+
+# Check accuracy:
+# ... on test
+table(pred.svp, test_set[,5])
+mean(pred.svp == test_set[,5]) # Rate of well classified!
+# ... on train
+table(fit.svp, training_set[,5])
+mean(fit.svp == training_set[,5]) # Rate of well classified!
+````
+
+Results are as good as those obtained for each kernel. This shows that any selection would do the classification task with high accuracy.
+
+## Quadratic Programming Solution
+
+We focus now on solving directly the Quadratic Programming (QP) formulation of the SVM. We use the library "quadprog" and our solver is inspired on code by R. Walker (https://gist.github.com/rwalk/64f1365f7a2470c498a4). Summarizing, it consists on building the proper matrices to be included as arguments of function "solve.QP". We do have to take special care with matrix $D$, that should be passed as a symmetric positive definite matrix. This is solved by adding a small perturbation to it. We set a linear kernel on our QP problem to simplify calculations. Codes for this second part are available at <https://github.com/hhroig/SVM-Iris-Seed-DataSets/blob/master/iris_qp_solutions2.R>. Functions to convert our data into "solve.QP's" format go as follows.
+
+````{r}
+## Packages
+library(quadprog)
+library(ggplot2)
+
+## Code for QP solver of SVM:
+qp.svm.fit = function(n, X, y){
+  # Dual method of Goldfarb and Idnani (1982, 1983) for solving quadratic programming
+  # problems of the form min(-d^T b + 1/2 b^T D b) with the constraints A^T b >= b_0.
+  
+  # ... build the system matrices
+  d <- matrix(1, nrow=n)
+  b0 <- rbind( matrix(0, nrow=1, ncol=1) , matrix(0, nrow=n, ncol=1) )
+  A <- t(rbind(matrix(y, nrow=1, ncol=n), diag(nrow=n)))
+  
+  # ...perturb matrix D in order for it to be symmetric positive definite:
+  eps <- 5e-4
+  Q <- sapply(1:n, function(i) y[i]*t(X)[,i])
+  D <- t(Q)%*%Q
+  
+  # ... call the QP solver:
+  sol <- solve.QP(D +eps*diag(n), d, A, b0, meq=1, factorized=FALSE)
+  qpsol <- matrix(sol$solution, nrow=n) # alphas!
+  return(qpsol)
+}
+
+## Code to extract and Plot the decision boundary:
+# ...build the support vectors, slopes, and intercepts
+findLine <- function(a, y, X){
+  nonzero <-  abs(a) > 1e-5
+  W <- rowSums(sapply(which(nonzero), function(i) a[i]*y[i]*X[i,]))
+  b <- mean(sapply(which(nonzero), function(i) X[i,]%*%W- y[i]))
+  slope <- -W[1]/W[2]
+  intercept <- b/W[2]
+  return(c(intercept,slope))
+}
+
+````
+
+We now focus on solving the "one vs. all" classification problem. This means that we are classifying each class against all other two.
+
+### Setosa vs. All
+
+````{r}
+## Transform Data as needed for QP code:
+
+X = as.matrix(training_set[,3:4]) # only "Petal.Length", "Petal.Width" as covariates
+n <- dim(X)[1]
+
+y = array(-1, length(training_set[,5]))
+y[training_set[,5] == "setosa"] = 1
+y = as.matrix(y)
+
+qpsol = qp.svm.fit(n, X, y)
+
+qpline = findLine( qpsol, y, X)
+
+# plot the results
+plt <- ggplot(training_set, aes(x=Petal.Length, y=Petal.Width)) + 
+  ggtitle("QP Solution: Setosa vs. All (linear Kernel)") +
+  geom_point(aes(fill=factor(y)), size=3, pch=21) +
+  geom_abline(intercept=qpline[1], slope=qpline[2], size=1, aes(color="quadprog"), show.legend) +
+  scale_fill_manual(values=c("red","blue"), guide='none')
+print(plt)
+````
+
+Solution sustain our previous results: Setosa class is linearly separable from the other two classes.
+
+### Versicolor vs. All
+
+````{r}
+## Transform Data as needed for QP code:
+
+X = as.matrix(training_set[,3:4]) # only "Petal.Length", "Petal.Width" as covariates
+n <- dim(X)[1]
+
+y = array(-1, length(training_set[,5]))
+y[training_set[,5] == "versicolor"] = 1
+y = as.matrix(y)
+
+qpsol = qp.svm.fit(n, X, y)
+
+qpline = findLine( qpsol, y, X)
+
+# plot the results
+library(ggplot2)
+plt <- ggplot(training_set, aes(x=Petal.Length, y=Petal.Width)) + 
+  ggtitle("QP Solution: Versicolor vs. All (linear Kernel)") +
+  geom_point(aes(fill=factor(y)), size=3, pch=21) +
+  geom_abline(intercept=qpline[1], slope=qpline[2], size=1, aes(color="quadprog"), show.legend) +
+  scale_fill_manual(values=c("red","blue"), guide='none')
+print(plt)
+````
+
+Results are terrible: we are not able to separate linearly the class Versicolor from the Virginica, what gives us poor results.
+
+### Virginica vs. All
+````{r}
+## Transform Data as needed for QP code:
+
+X = as.matrix(training_set[,3:4]) # only "Petal.Length", "Petal.Width" as covariates
+n <- dim(X)[1]
+
+y = array(-1, length(training_set[,5]))
+y[training_set[,5] == "virginica"] = 1
+y = as.matrix(y)
+
+qpsol = qp.svm.fit(n, X, y)
+
+qpline = findLine( qpsol, y, X)
+
+# plot the results
+library(ggplot2)
+plt <- ggplot(training_set, aes(x=Petal.Length, y=Petal.Width)) + 
+  ggtitle("QP Solution: Virginica vs. All (linear Kernel)") +
+  geom_point(aes(fill=factor(y)), size=3, pch=21) +
+  geom_abline(intercept=qpline[1], slope=qpline[2], size=1, aes(color="quadprog"), show.legend) +
+  scale_fill_manual(values=c("red","blue"), guide='none')
+print(plt)
+````
+
+Results show a similar behavior as in previous cases when we were not able to separate a couple of elements from classes Versicolor and Virginica. Nevertheless, the solution is better than that from previous case, showing a clearer separation between classes.
+
+# Conclusions 
+
+* We studied the classification problem on the Iris Data Set, particularly by fixing just 2 covariates that account for the "most clear" class separation.
+* We showed the performance of the SVM solution under three different kernels: linear, polynomial and radial.
+* The solutions were quite good in all cases, showing just a couple of misclassified elements.
+* We were able to improve the amount of support vectors by a tuning procedure.
+* We also showed a mixture of kernels in the SVM solution with similar accuracy to those models with a single kernel.
+* We showed how to solve the QP problem of SVM with solutions confirming previous results: Setosa class is clearly separable from the other two, while there is some overlapping between Versicolor and Virginica classes.

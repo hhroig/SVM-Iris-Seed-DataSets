@@ -1,0 +1,393 @@
+---
+title: "Seeds Data Set: A Support Vector Machine Classifier"
+author: "Harold A. Hernández Roig"
+date: "December 14th, 2018"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+We deal with the problem of classifying three different varieties of wheat (Kama, Rosa and Canadian), from Seeds Data Set (check: <http://archive.ics.uci.edu/ml/datasets/seeds>). There are several continuous covariates that correspond to measurements of geometrical properties of kernels from the seeds in study. These are: 
+
+1. area A, 
+2. perimeter P, 
+3. compactness $C = 4*\pi*A/P^2$, 
+4. length of kernel, 
+5. width of kernel, 
+6. asymmetry coefficient 
+7. length of kernel groove. 
+
+We start by loading libraries and showing a quick exploratory (just visual) analysis of our data. Observations are divided into training and test sets in order to report an unbiased classification rate. Data and codes for this first part are available at <https://github.com/hhroig/SVM-Iris-Seed-DataSets/blob/master/seeds_svm_solution.R>.
+
+```{r }
+# Packages
+library(caTools) # to split data into train/test
+library(ggplot2) # nice plots...
+library(GGally)  # also plotting tools
+library(e1071)   # classical package for svm
+
+
+## Load Data:
+dataset = read.delim(file = "seeds_dataset.txt", 
+                     header = FALSE, sep = "\t",
+                     dec = ".")
+dataset = na.omit(dataset) # ommit NA
+colnames(dataset) <- c("A", "P", "C", "lengthK", "widthK", "asym", "groove", "class")
+dataset$class = as.factor(dataset$class)
+
+
+# Some exploratory visualization 
+ggpairs(dataset, ggplot2::aes(colour = class, alpha = 0.2))
+
+## Split Data: train 80% /test 20% to deal with overfitting
+set.seed(123)
+split = sample.split(dataset$class, SplitRatio = .8)
+training_set = subset(dataset, split == TRUE)
+test_set = subset(dataset, split == FALSE)
+
+
+```
+
+We want to focus on non-linearly separable features, so we decide to pick up just the variables $C$ and $widthK$ as covariates for our SVM solution. We can see that in the space "induced" by these variables, the classes are not linearly separable. Moreover, using just 2 covariates gives us an easy tool to check our results, because we are able to plot the decision boundaries.
+
+```{r}
+# Exclude all but $C$ and $widthK$
+training_set = training_set[,c(3,5,8)]
+test_set = test_set[,c(3,5,8)]
+
+```
+## Support Vector Machine Solutions Under Different Kernels
+
+### Linear Kernel
+
+We start by checking the solutions under a linear kernel, with the defaults values assigned by package "e1071". As we are dealing with a multiclass task we use the "one-against-one"-approach, in
+which k(k-1)/2 binary classifiers are trained and the appropriate class is found by a voting scheme. As stated in the package help, by fitting a "probability model" we are fitting a logistic distribution using maximum likelihood to
+the decision values of all binary classifiers, and then computing the a-posteriori class probabilities for
+the multi-class problem using quadratic optimization.
+
+```{r}
+##  LINEAR KERNEL
+model.l <- svm(class~., data = training_set,
+               type="C-classification",kernel="linear",probability = TRUE)
+print(model.l)
+
+# Compute decision values and probabilities:
+pred.l <- predict(model.l, test_set, decision.values = TRUE, probability = TRUE)
+
+# Check accuracy:
+table(pred.l, test_set$class)
+mean(pred.l == test_set$class) # Rate of well classified! (predicted)
+
+```
+
+We therefore have some decent classification rate, even though there are some observations that cannot be correctly classify. We also have a high number of support vectors. Let's see if we can improve these results by tuning the cost (the only hyperparameter) within a not-too-thin grid (to obtain results in a short time). 
+
+````{r}
+## Tuning cost:
+tune.l <- tune.svm(class~., data = training_set, type ="C-classification", 
+                   kernel = "linear", probability = TRUE, cost = seq(0.1,10,by=0.1))
+optimal.cost.l = tune.l$best.parameters$cost
+
+## Tuned Model:
+
+model.l.tuned <- svm(class~., data = training_set, type = "C-classification", 
+                     kernel = "linear", probability = TRUE, cost = optimal.cost.l) 
+print(model.l.tuned)
+
+# Compute decision values and probabilities:
+pred.l.tuned <- predict(model.l.tuned, test_set, decision.values = TRUE, 
+                        probability = TRUE)
+
+# Check accuracy:
+table(pred.l.tuned, test_set$class)
+mean(pred.l.tuned == test_set$class) # Rate of well classified! (predicted)
+
+plot(model.l.tuned, test_set)
+plot(model.l.tuned, training_set)
+````
+
+Even though the rate of well-classified is still in $85\%$, the plots show that a smoother bound could perform better as frontier between classes. This tuning only improved our model a little bit, having now 1 less misclassification and 1 less support vector
+
+### Polynomial Kernel
+
+Let's fix a polynomial kernel now. We start by fitting the model with the defaults hyperparameters.
+
+````{r}
+##  POLYNOMIAL KERNEL
+model.p <- svm(class ~ ., data = training_set,
+               type = "C-classification", kernel= "polynomial", probability = TRUE)
+print(model.p)
+
+# Compute decision values and probabilities:
+pred.p <- predict(model.p, test_set, decision.values = TRUE, probability = TRUE)
+
+# Check accuracy:
+table(pred.p, test_set$class)
+mean(pred.p == test_set$class) # Rate of well classified!
+````
+
+Compared to linear kernel in previous section, the results are getting worse! We have higher misclassification and number of support vectors. We therefore conduct a tuning procedure over a not-too-thin grid, in order to obtain results in a decent amount of time.
+
+````{r}
+# Tuning cost, degree, gamma and coef0:
+tune.p <- tune.svm(class ~ ., data = training_set,
+                   type="C-classification",kernel="polynomial",probability = TRUE,
+                   cost = seq(1,10,by=1), coef0 = c(0,1), degree = seq(3,4,by=1), 
+                   gamma = seq(0.6,1,by=0.2))
+
+optimal.cost.p = tune.p$best.parameters$cost
+optimal.coef0.p = tune.p$best.parameters$coef0
+optimal.degree.p = tune.p$best.parameters$degree
+optimal.gamma.p = tune.p$best.parameters$gamma
+
+## Tuned Model:
+
+model.p.tuned <- svm(class ~ ., data = training_set,
+                     type="C-classification",kernel="polynomial",probability = TRUE,
+                     cost = optimal.cost.p, coef0 = optimal.coef0.p,
+                     degree = optimal.degree.p, gamma = optimal.gamma.p)
+print(model.p.tuned)
+
+# Compute decision values and probabilities:
+pred.p.tuned <- predict(model.p.tuned, test_set, decision.values = TRUE, 
+                        probability = TRUE)
+
+# Check accuracy:
+table(pred.p.tuned, test_set$class)
+mean(pred.p.tuned == test_set$class) # Rate of well classified!
+
+# Plot Decision Boundaries:
+plot(model.p.tuned, test_set)
+plot(model.p.tuned, training_set)
+````
+
+Results speak for themselves: we improved the model compared to that from previous section. Even though the rate of well classified is the same, we see that we needed less support vectors. Moreover, the plots show some intuitively-better boundaries between classes.
+
+### RBF (Gaussian) Kernel
+
+Let's move to a radial kernel, starting the analysis by fitting a model with the default hyperparameters.
+
+````{r}
+##  RBF (GAUSSIAN) KERNEL
+
+model.g <- svm(class~., data = training_set,
+               type="C-classification",kernel="radial",probability = TRUE)
+print(model.g)
+
+# Compute decision values and probabilities:
+pred.g <- predict(model.g, test_set, decision.values = TRUE, probability = TRUE)
+
+# Check accuracy:
+table(pred.g, test_set$class)
+mean(pred.g == test_set$class) # Rate of well classified!
+
+````
+
+We needed 76 support vectors and the rate of well-classified is around $82.5\%$. Let's try to improve this by tuning the hyperparameters.
+
+````{r}
+# Tuning cost, degree, gamma and coef0:
+tune.g <- tune.svm(class ~ ., data = training_set,
+                   type="C-classification",kernel="radial",probability = TRUE,
+                   cost = seq(1,10,by=1), gamma = seq(0,10,by=.5))
+optimal.cost.g = tune.g$best.parameters$cost
+optimal.gamma.g = tune.g$best.parameters$gamma
+
+## Tuned Model:
+model.g.tuned <- svm(class ~ ., data = training_set,
+                     type="C-classification",kernel="radial",probability = TRUE,
+                     cost = optimal.cost.g, gamma = optimal.gamma.g)
+
+print(model.g.tuned)
+
+# Compute decision values and probabilities:
+pred.g.tuned <- predict(model.g.tuned, test_set, decision.values = TRUE, 
+                        probability = TRUE)
+
+# Check accuracy:
+table(pred.g.tuned, test_set$class)
+mean(pred.g.tuned == test_set$class) # Rate of well classified!
+
+# Plot Decision Boundaries:
+plot(model.g.tuned, test_set)
+plot(model.g.tuned, training_set)
+````
+
+Even though we needed 72 support vectors, we obtained the higher rate of well-classified: $87.5\%$. This supports the idea that a radial kernel could perform better than the previous two. Moreover, we hypothesize that a deeper tuning procedure could lead to better results, but this implies a higher computational cost and goes beyond the scope of this report.
+
+### Mixture of Kernels
+
+We introduce now a mixture of polynomial and radial kernels. This is inspired in code at <https://www.r-bloggers.com/learning-kernels-svm/>. We fix the average of these two type of kernels with hyperparameters inspired on those from the tuning procedures.
+
+````{r}
+##  MIXTURE OF KERNELS
+library(kernlab)
+# Average Kernel = RBF Kernel + Polynomial Kernel
+kfunction2 <- function(sigma, degree, scale, offset)
+{
+  k <- function (x,y)
+  {
+    1/2*exp(-sigma*sum((x-y)^2)) + 1/2*(scale*sum((x)*(y))+offset)^degree
+  }
+  class(k) <- "kernel"
+  k
+}
+
+svp <- ksvm(class ~ ., data = training_set,
+            type="C-svc", kernel=kfunction2(4, 4, 1, 1), C = 1, prob.model=TRUE)
+svp
+
+## get fitted values
+fit.svp = fitted(svp)
+## Test on the training set with probabilities as output
+pred.svp = predict(svp, test_set, type = "response")
+
+# Check accuracy:
+# ... on test
+table(pred.svp, test_set$class)
+mean(pred.svp == test_set$class) # Rate of well classified!
+# ... on train
+table(fit.svp, training_set$class)
+mean(fit.svp == training_set$class) # Rate of well classified!
+````
+
+Results show a better performance on the number of support vectors, even though the rate of well classified is as good as that from polynomial kernel. A more precise selection of the hyperparameters and a previous deeper tuning on the independent kernels should lead to better results. Nevertheless, kernel mixture shows a decent performance.
+
+## Quadratic Programming Solution
+
+We focus now on solving directly the Quadratic Programming (QP) formulation of the SVM. We use the library "quadprog" and our solver is inspired on code by R. Walker (https://gist.github.com/rwalk/64f1365f7a2470c498a4). Summarizing, it consists on building the proper matrices to be included as arguments of function "solve.QP". We do have to take special care with matrix $D$, that should be passed as a symmetric positive definite matrix. This is solved by adding a small perturbation to it. We set a linear kernel on our QP problem to simplify calculations. Codes for this second part are available at <https://github.com/hhroig/SVM-Iris-Seed-DataSets/blob/master/seeds_qp_solutions2.R>. Functions to convert our data into "solve.QP's" format go as follows.
+
+````{r}
+## Packages
+library(quadprog)
+library(ggplot2)
+
+## Code for QP solver of SVM:
+qp.svm.fit = function(n, X, y){
+  # Dual method of Goldfarb and Idnani (1982, 1983) for solving quadratic programming
+  # problems of the form min(-d^T b + 1/2 b^T D b) with the constraints A^T b >= b_0.
+  
+  # ... build the system matrices
+  d <- matrix(1, nrow=n)
+  b0 <- rbind( matrix(0, nrow=1, ncol=1) , matrix(0, nrow=n, ncol=1) )
+  A <- t(rbind(matrix(y, nrow=1, ncol=n), diag(nrow=n)))
+  
+  # ...perturb matrix D in order for it to be symmetric positive definite:
+  eps <- 5e-4
+  Q <- sapply(1:n, function(i) y[i]*t(X)[,i])
+  D <- t(Q)%*%Q
+  
+  # ... call the QP solver:
+  sol <- solve.QP(D +eps*diag(n), d, A, b0, meq=1, factorized=FALSE)
+  qpsol <- matrix(sol$solution, nrow=n) # alphas!
+  return(qpsol)
+}
+
+## Code to extract and Plot the decision boundary:
+# ...build the support vectors, slopes, and intercepts
+findLine <- function(a, y, X){
+  nonzero <-  abs(a) > 1e-5
+  W <- rowSums(sapply(which(nonzero), function(i) a[i]*y[i]*X[i,]))
+  b <- mean(sapply(which(nonzero), function(i) X[i,]%*%W- y[i]))
+  slope <- -W[1]/W[2]
+  intercept <- b/W[2]
+  return(c(intercept,slope))
+}
+
+````
+
+We now focus on solving the "one vs. all" classification problem. This means that we are classifying each class against all other two.
+
+### Kama ("1") vs. All
+
+````{r}
+## Transform Data as needed for QP code:
+
+X = as.matrix(training_set[,1:2]) 
+n <- dim(X)[1]
+
+y = array(-1, length(training_set[,3]))
+y[training_set[,3] == "1"] = 1
+y = as.matrix(y)
+
+qpsol = qp.svm.fit(n, X, y)
+
+qpline = findLine( qpsol, y, X)
+
+# plot the results
+plt <- ggplot(training_set, aes(x=C, y=widthK)) + 
+  ggtitle("QP Solution: Kama (1) vs. All (linear Kernel)") +
+  geom_point(aes(fill=factor(y)), size=3, pch=21) +
+  geom_abline(intercept=qpline[1], slope=qpline[2], size=1, aes(color="quadprog"), show.legend) +
+  scale_fill_manual(values=c("red","blue"), guide='none')
+print(plt)
+````
+
+Results for a linear kernel does not look good, since our problem is not linearly separable. This sustain the results from previous sections: using a nonlinear kernel improves drastically the performance of the method.
+
+### Rosa (2) vs. All
+
+````{r}
+## Transform Data as needed for QP code:
+
+X = as.matrix(training_set[,1:2]) 
+n <- dim(X)[1]
+
+y = array(-1, length(training_set[,3]))
+y[training_set[,3] == "2"] = 1
+y = as.matrix(y)
+
+qpsol = qp.svm.fit(n, X, y)
+
+qpline = findLine( qpsol, y, X)
+
+# plot the results
+plt <- ggplot(training_set, aes(x=C, y=widthK)) + 
+  ggtitle("QP Solution: Rosa (2) vs. All (linear Kernel)") +
+  geom_point(aes(fill=factor(y)), size=3, pch=21) +
+  geom_abline(intercept=qpline[1], slope=qpline[2], size=1, aes(color="quadprog"), show.legend) +
+  scale_fill_manual(values=c("red","blue"), guide='none')
+print(plt)
+````
+
+Now, the plots show that class "Rosa" can be separated from the other two by a straight line. Even though there is some overlapping, so a different kernel must improve the results, as showed in previous sections.
+
+### Canadian (3) vs. All
+
+````{r}
+
+X = as.matrix(training_set[,1:2]) 
+n <- dim(X)[1]
+
+y = array(-1, length(training_set[,3]))
+y[training_set[,3] == "3"] = 1
+y = as.matrix(y)
+
+qpsol = qp.svm.fit(n, X, y)
+
+qpline = findLine( qpsol, y, X)
+
+# plot the results
+plt <- ggplot(training_set, aes(x=C, y=widthK)) + 
+  ggtitle("QP Solution: Canadian (3) vs. All (linear Kernel)") +
+  geom_point(aes(fill=factor(y)), size=3, pch=21) +
+  geom_abline(intercept=qpline[1], slope=qpline[2], size=1, aes(color="quadprog"), show.legend) +
+  scale_fill_manual(values=c("red","blue"), guide='none')
+print(plt)
+````
+
+Once more, a straight line is not able to separate classes with high precision. The results are also affected by class overlapping.
+
+# Conclusions 
+
+* We studied the classification problem on the Seeds Data Set, particularly by fixing just 2 covariates that account for nonlinear separation.
+* We showed the performance of the SVM solution under three different kernels: linear, polynomial and radial.
+* The solutions were improved in each case by a tuning procedure.
+* The radial kernel showed the higher accuracy and rate of well classified observations.
+* We also showed a mixture of kernels in the SVM solution with similar accuracy to the model with polynomial kernel.
+* The mixture-of-kernels-model showed the best performance in terms of number of support vectors. 
+* We showed how to solve the QP problem of SVM with linear kernel. Solutions confirmed previous results: this data set is not linearly separable.
